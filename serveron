@@ -1,0 +1,97 @@
+#!/bin/sh
+SERVER=$1
+
+FORREAL=false
+FORREAL=true
+
+DEBUG=false
+DEBUG=true
+
+OUTLETONOFF=ON
+OUTLETVALUE=1
+if [ `basename $0` = "serveroff" ]
+then
+  OUTLETONOFF="OFF"
+  OUTLETVALUE=2
+fi
+
+READAVALUE=false
+if [ `basename $0` = "serverstat" ]
+then
+  READAVALUE=true
+  # only reading a value and not turning anything on/off
+fi
+# echo $0 $READAVALUE
+
+
+if [ -z $SERVER ]
+then
+  echo usage $0 "<servername>"
+  exit
+fi
+
+if ! grep -l "${SERVER}$" serveroutlet >/dev/null
+then
+  echo Server $SERVER not found in serveroutlet database
+  echo "do you need to re-run readlabel?"
+  exit
+fi
+
+if ! $READAVALUE
+then
+  if [ Outlet_ = `echo $SERVER|sed 's/^\(.......\).*$/\1/'` ]
+  then
+    echo "HEY!!!!"
+    echo "you can't turn unlabeled outlets on and off!!!"
+    exit
+  fi
+  echo "Turning outlets ${OUTLETONOFF}!!!"
+  echo The server $SERVER is plugged into the following outlets:
+  echo
+  grep "${SERVER}$" serveroutlet \
+  | while read PDUIP PDUNAME OUTLET SERVER
+  do
+    echo $PDUNAME OUTLET $OUTLET
+  done
+  echo
+
+  echo "Are you sure you want to turn all these outlets $OUTLETONOFF?"
+  echo -e "(YES/NO)? \c"
+  read USERINPUT
+
+  if [ ! ${USERINPUT}x = YESx ]
+  then
+    echo exiting without making changes
+    exit
+  fi
+fi
+
+  grep "${SERVER}$" serveroutlet \
+  | while read PDUIP PDUNAME OUTLET SERVER
+  do
+    #echo $PDUNAME OUTLET $OUTLET
+    PASSWORDS=`grep "^${PDUIP} " device|sed -e 's/^\([^ ]* [^ ]* [^ ]* [^ ]*\) .*$/\1/' -e 's/[^ ]* [^ ]* *//'`
+    READPW=`echo $PASSWORDS | sed 's/^\([^ ]*\) .*/\1/'`
+    [ -z $READPW ] && READPW=default
+    if grep "^${READPW}" snmpassword >/dev/null
+    then
+      READPW=`grep "^${READPW}" snmpassword | sed -e 's/^[^ ]* \([^ ]*\) *.*$/\1/'`
+    fi
+
+    if ! $READAVALUE
+    then
+      WRITEPW=`echo $PASSWORDS | sed 's/^[^ ]* //'`
+      [ -z $WRITEPW ] && WRITEPW=default
+      if grep "^${WRITEPW}" snmpassword >/dev/null
+      then
+        WRITEPW=`grep "^${WRITEPW}" snmpassword | sed -e 's/^[^ ]* [^ ]* \([^ ]*\) *.*$/\1/'`
+      fi
+
+      $DEBUG && echo  /usr/bin/snmpset -v2c -c "<COMMUNITY>" $PDUIP 1.3.6.1.4.1.318.1.1.4.4.2.1.3.$OUTLET integer $OUTLETVALUE
+      ! $DEBUG && $FORREAL && /usr/bin/snmpset -v2c -c $WRITEPW $PDUIP 1.3.6.1.4.1.318.1.1.4.4.2.1.3.$OUTLET integer $OUTLETVALUE >/dev/null
+      $DEBUG && $FORREAL && /usr/bin/snmpset -v2c -c $WRITEPW $PDUIP 1.3.6.1.4.1.318.1.1.4.4.2.1.3.$OUTLET integer $OUTLETVALUE
+    fi
+    echo -e "$PDUNAME OUTLET $OUTLET is \c"
+    /usr/bin/snmpget -v2c -c $READPW $PDUIP 1.3.6.1.4.1.318.1.1.4.4.2.1.3.$OUTLET \
+    | sed -e 's/^.* 1$/ON/' -e 's/^.* 2$/OFF/'
+  done
